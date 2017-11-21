@@ -13,6 +13,9 @@ from simplecrypt import encrypt, decrypt
 from configparser import SafeConfigParser
 import pyqrcode
 
+# Custom Libraries
+import hd
+
 default_representative = \
         'xrb_16k5pimotz9zehjk795wa4qcx54mtusk8hc5mdsjgy57gnhbj3hj6zaib4ic'
 raw_in_xrb = 1000000000000000000000000000000.0
@@ -104,20 +107,6 @@ def account_xrb(account):
 
 def private_public(private):
     return ed25519.SigningKey(private).get_verifying_key().to_bytes()
-
-def seed_account(seed, index):
-    # Given an account seed and index #, provide the account private and
-    # public keys
-    h = blake2b(digest_size=32)
-
-    seed_data = BitArray(hex=seed)
-    seed_index = BitArray(int=index,length=32)
-
-    h.update(seed_data.bytes)
-    h.update(seed_index.bytes)
-
-    account_key = BitArray(h.digest())
-    return account_key.bytes, private_public(account_key.bytes)
 
 def get_pow(hash):
     #Generate work for block
@@ -215,12 +204,12 @@ def get_previous():
 def get_pending():
     #Get pending blocks
     data = json.dumps({'action' : 'pending', 'account' : account})
-    
+
     ws.send(data)
-    
+
     pending_blocks =  ws.recv()
     #print("Received '%s'" % pending_blocks)
-    
+
     rx_data = json.loads(str(pending_blocks))
 
     return rx_data['blocks']
@@ -228,7 +217,7 @@ def get_pending():
 def send_xrb(dest_address, final_balance):
     previous = get_previous()
 
-    priv_key, pub_key = seed_account(seed,index)
+    priv_key, pub_key = hd.mnemonic_to_keys(mnemonic, passphrase=password, account_number=index)
 
     hex_balance = hex(final_balance)
     hex_final_balance = hex_balance[2:].upper().rjust(32, '0')
@@ -277,7 +266,7 @@ def receive_xrb(_loop, _data):
             #Get account info
             previous = get_previous()
 
-            priv_key, pub_key = seed_account(seed,index)
+            priv_key, pub_key = hd.mnemonic_to_keys(mnemonic, passphrase=password, account_number=index)
 
             #print("Starting PoW Generation")
             work = get_pow(previous)
@@ -316,7 +305,7 @@ def open_xrb():
     #print(rx_data['blocks'][0])
     source = rx_data['blocks'][0]
 
-    priv_key, pub_key = seed_account(seed,index)
+    priv_key, pub_key = hd.mnemonic_to_keys(mnemonic, passphrase=password, account_number=index)
     public_key = ed25519.SigningKey(priv_key).get_verifying_key().to_ascii(encoding="hex")
 
     #print("Starting PoW Generation")
@@ -345,7 +334,7 @@ def change_xrb():
     representative = parser.get('wallet', 'representative')
     previous = get_previous()
 
-    priv_key, pub_key = seed_account(seed,index)
+    priv_key, pub_key = hd.mnemonic_to_keys(mnemonic, passphrase=password, account_number=index)
     public_key = ed25519.SigningKey(priv_key).get_verifying_key().to_ascii(encoding="hex")
 
     #print("Starting PoW Generation")
@@ -621,15 +610,16 @@ while True:
     print("Password Mismatch!")
 
 if len(config_files) == 0:
-    print("Generating Wallet Seed")
-    full_wallet_seed = hex(random.SystemRandom().getrandbits(256))
-    wallet_seed = full_wallet_seed[2:].upper()
-    print("Wallet Seed (make a copy of this in a safe place!): ", wallet_seed)
-    write_encrypted(password, 'seed.txt', wallet_seed)
+    mnemonic =  hd.random_mnemonic(strength=256, language='english')
+    hd.print_mnemonic(mnemonic) # Display mnemonic prompt
+
+    write_encrypted(password, 'seed.txt', mnemonic)
 
     cfgfile = open("config.ini",'w')
     parser.add_section('wallet')
-    priv_key, pub_key = seed_account(wallet_seed, 0)
+
+    priv_key, pub_key = hd.mnemonic_to_keys(mnemonic, passphrase=password, account_number=0)
+
     public_key = str(binascii.hexlify(pub_key), 'ascii')
     print("Public Key: ", str(public_key))
 
@@ -646,11 +636,10 @@ if len(config_files) == 0:
     cfgfile.close()
 
     index = 0
-    seed = wallet_seed
 else:
     print("Config file found")
     print("Decoding wallet seed with your password")
-    seed = read_encrypted(password, 'seed.txt', string=True)
+    mnemonic = read_encrypted(password, 'seed.txt', string=True)
 
 account = parser.get('wallet', 'account')
 index = int(parser.get('wallet', 'index'))
